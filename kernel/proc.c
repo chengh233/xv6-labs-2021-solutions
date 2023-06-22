@@ -140,6 +140,7 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+  p->mask = 0;
 
   return p;
 }
@@ -164,6 +165,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->mask = 0;
 }
 
 // Create a user page table for a given process,
@@ -234,6 +236,7 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
+  p->mask = 0;
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -288,6 +291,7 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  np->mask = p->mask;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -653,4 +657,20 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+uint64
+getnproc(void)
+{
+  struct proc *p;
+  uint64 amount = 0;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED) {
+      amount++;
+    }
+    release(&p->lock);
+  }
+  return amount;
 }
