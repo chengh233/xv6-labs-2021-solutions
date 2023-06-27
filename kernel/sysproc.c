@@ -81,6 +81,50 @@ int
 sys_pgaccess(void)
 {
   // lab pgtbl: your code here.
+  uint64 va = 0;
+  int n = 0;
+  uint64 ua = 0;
+  uint32 bitmask = 0;
+  int i = 1;
+  int idx = 0;
+
+  if(argaddr(0, &va) < 0)
+    return -1;
+  if(argint(1, &n) < 0)
+    return -1;
+  if(argaddr(2, &ua) < 0)
+    return -1;
+
+  pte_t pte = 0;
+
+  if(va >= MAXVA)
+    panic("pgaccess");
+
+  pagetable_t pagetable = myproc()->pagetable;
+  for(int level = 2; level > 0; level--) {
+    pte_t *pte = &pagetable[PX(level, va)];
+    if(*pte & PTE_V) {
+      pagetable = (pagetable_t)PTE2PA(*pte);
+    } else {
+      panic("pgaccess");
+    }
+  }
+  idx = PX(0, va);
+  pte = pagetable[idx++];
+
+  while(i <= n && i <= MAXPGN) {
+    pte = pagetable[idx++];
+    if (pte & PTE_A){
+      bitmask |= (1 << i);
+      pte &= ~PTE_A;
+    }
+    i++;
+  }
+
+  if (copyout(myproc()->pagetable, ua, (char *)&bitmask, sizeof(bitmask)) < 0){
+    return -1;
+  }
+
   return 0;
 }
 #endif
