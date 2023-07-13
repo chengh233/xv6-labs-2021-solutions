@@ -29,6 +29,34 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+void
+trapframecopy(struct trapframe *f1, struct trapframe *f2)
+{
+  f1->epc =  f2->epc;           // saved user program counter
+  f1->ra  =  f2->ra;
+  f1->sp  =  f2->sp;
+  f1->s0  =  f2->s0;
+  f1->s1  =  f2->s1;
+  f1->a0  =  f2->a0;
+  f1->a1  =  f2->a1;
+  f1->a2  =  f2->a2;
+  f1->a3  =  f2->a3;
+  f1->a4  =  f2->a4;
+  f1->a5  =  f2->a5;
+  f1->a6  =  f2->a6;
+  f1->a7  =  f2->a7;
+  f1->s2  =  f2->s2;
+  f1->s3  =  f2->s3;
+  f1->s4  =  f2->s4;
+  f1->s5  =  f2->s5;
+  f1->s6  =  f2->s6;
+  f1->s7  =  f2->s7;
+  f1->s8  =  f2->s8;
+  f1->s9  =  f2->s9;
+  f1->s10 =  f2->s10;
+  f1->s11 =  f2->s11;
+}
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -77,8 +105,14 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  if(which_dev == 2){
+    if (p->tickets != 0 && p->tickets == p->beats++){
+      trapframecopy(p->trapframe_pre, p->trapframe);
+      p->trapframe->epc = p->handler;
+      } else {
+         yield();
+      }
+  }
 
   usertrapret();
 }
