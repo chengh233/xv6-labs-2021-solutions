@@ -155,6 +155,8 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+
+  // only free when it is not used by any process
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -281,6 +283,7 @@ fork(void)
     return -1;
   }
 
+  // printf ("copy page table from %s...\n", p->name);
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);

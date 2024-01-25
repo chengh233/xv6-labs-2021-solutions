@@ -1,0 +1,5 @@
+settings set auto-confirm true
+settings set target.architecture riscv64
+target create --remote-gdb-server 127.0.0.1:25501 --symfile kernel/kernel
+settings set disassembly-flavor intel
+settings set plugin.process.gdb-remote.packet-timeout 60
