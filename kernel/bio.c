@@ -24,12 +24,11 @@
 #include "buf.h"
 
 #define NULL 0
-#define HASH_TABLE_SIZE 331
+#define HASH_TABLE_SIZE 31
 
 struct hash_entry {
   struct spinlock lock;
   struct buf* head;
-  struct buf* tail;
 };
 
 struct {
@@ -50,8 +49,8 @@ hash_find(uint dev, uint blockno, struct hash_entry* entry)
   struct buf* b = entry->head;
   while (b) {
     if(b->dev == dev && b->blockno == blockno) {
-      b->refcnt++;
-      return b;
+        b->refcnt++;
+        return b;
     }
     b = b->next;
   }
@@ -61,13 +60,12 @@ hash_find(uint dev, uint blockno, struct hash_entry* entry)
 int
 hash_put(struct buf* b,struct hash_entry* entry)
 {
-  if (entry->tail == NULL) {
-    entry->head = b;
-    entry->tail = b;
-  } else {
-    entry->tail->next = b;
-    entry->tail = b;
+  struct buf* curr = entry->head;
+  while (curr && curr->next) {
+    curr = curr->next;
   }
+  if(!curr) entry->head = b;
+  else curr->next = b;
   return 0;
 }
 
@@ -80,12 +78,8 @@ hash_remove(uint dev, uint blockno, struct hash_entry* entry)
     if(b->dev == dev && b->blockno == blockno) {
       if(pre == NULL) {
         entry->head = b->next;
-        entry->tail = b->next;
       } else {
         pre->next = b->next;
-        if (pre->next == NULL) {
-          entry->tail = pre;
-        }
       }
       return 0;
     }
@@ -110,9 +104,8 @@ binit(void)
   }
   struct hash_entry* e = NULL;
   for(e = &hash_table[0]; e < &hash_table[0]+HASH_TABLE_SIZE; e++){
-    initlock(&e->lock, "entry");
+    initlock(&e->lock, "bcache.bucket");
     e->head = NULL;
-    e->tail = NULL;
   }
 }
 
@@ -125,7 +118,7 @@ bget(uint dev, uint blockno)
 
   struct buf *b = NULL;
 
-  uint key = (dev+blockno)%HASH_TABLE_SIZE;
+  uint key = blockno%HASH_TABLE_SIZE;
   struct hash_entry *entry = &hash_table[key];
   acquire(&entry->lock);
   // check if there is one in the cache
@@ -136,35 +129,36 @@ bget(uint dev, uint blockno)
     return b;
   } else {
     // check time stamp and find the least used buffer
-    uint min = 0xFFFFFFFF;
-    uint idx = 0;
+    uint min = (uint)(int)(-1);
     int i = 0;
+
+    struct hash_entry *target_entry = NULL;
     for (i = 0;i < NBUF; i++) {
       struct buf* tmp = &bcache.buf[i];
+      uint tmp_key = tmp->blockno%HASH_TABLE_SIZE;
+      struct hash_entry *tmp_entry = &hash_table[tmp_key];
+      if (tmp_entry->lock.locked) continue;
+      acquire(&tmp_entry->lock);
       if(tmp->refcnt == 0) {
         if(tmp->timestamp < min) {
+          if (target_entry != NULL) release(&target_entry->lock);
+          target_entry = tmp_entry;
           min = tmp->timestamp;
-          idx = i;
+          b = tmp;
+          continue;
         }
       }
+      release(&tmp_entry->lock);
     }
     // find least uesed get key
-    b = &bcache.buf[idx];
-    uint old_key = (b->dev+b->blockno)%HASH_TABLE_SIZE;
-    struct hash_entry *old_entry = &hash_table[old_key];
-    if (old_entry != entry) {
-      acquire(&old_entry->lock);
-    }
-    hash_remove(b->dev, b->blockno, old_entry);
-    if (old_entry != entry) {
-      release(&old_entry->lock);
-    }
-    // Add new entry to table
+    hash_remove(b->dev, b->blockno, target_entry);
     b->dev = dev;
     b->blockno = blockno;
     b->valid = 0;
     b->refcnt = 1;
     b->next = NULL;
+    release(&target_entry->lock);
+
     hash_put(b, entry);
     release(&entry->lock);
     acquiresleep(&b->lock);
@@ -205,7 +199,7 @@ brelse(struct buf *b)
     panic("brelse");
 
   releasesleep(&b->lock);
-  uint key = (b->dev+b->blockno)%HASH_TABLE_SIZE;
+  uint key = (b->blockno)%HASH_TABLE_SIZE;
   struct hash_entry *entry = &hash_table[key];
   acquire(&entry->lock);
   b->refcnt--;
@@ -226,5 +220,3 @@ bunpin(struct buf *b) {
   b->refcnt--;
   release(&bcache.lock);
 }
-
-
