@@ -21,12 +21,17 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
+  /*
+  size of page statue is PHYSTOP / PGSIZE not (PHYSTOP-KERBASE)/PGSIZE
+  */
+  int pagestatus[(PHYSTOP-KERNBASE)/PGSIZE];
 } kmem;
 
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  memset(kmem.pagestatus, 0, sizeof(kmem.pagestatus));
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -52,14 +57,23 @@ kfree(void *pa)
     panic("kfree");
 
   // Fill with junk to catch dangling refs.
-  memset(pa, 1, PGSIZE);
-
-  r = (struct run*)pa;
-
   acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
+  if (--kmem.pagestatus[PAGE_INDEX((uint64)pa)] <= 0) {
+    // printf("curr ref of %d: %d\n", PAGE_INDEX((uint64)pa), kmem.pagestatus[PAGE_INDEX((uint64)pa)]);
+    memset(pa, 1, PGSIZE);
+    r = (struct run*)pa;
+    r->next = kmem.freelist;
+    kmem.freelist = r;
+  }
   release(&kmem.lock);
+  // memset(pa, 1, PGSIZE);
+
+  // r = (struct run*)pa;
+
+  // acquire(&kmem.lock);
+  // r->next = kmem.freelist;
+  // kmem.freelist = r;
+  // release(&kmem.lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -72,11 +86,56 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r) {
+    kmem.pagestatus[PAGE_INDEX((uint64)r)] = 1;
     kmem.freelist = r->next;
+  }
   release(&kmem.lock);
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+void
+incref (void* pa)
+{
+  acquire(&kmem.lock);
+  kmem.pagestatus[PAGE_INDEX((uint64)pa)] += 1;
+  release(&kmem.lock);
+}
+
+int
+cowhanlder (pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint flags;
+  uint64 pa;
+  if (!pagetable || va > MAXVA) return -1;
+  pte = walk(pagetable, va, 0);
+  /*
+  we only track User or Valid page here
+  */
+  if (!pte || !(*pte & PTE_U) || !(*pte & PTE_V))
+    return -1;
+  pa = PTE2PA(*pte);
+  acquire(&kmem.lock);
+  if (kmem.pagestatus[PAGE_INDEX((uint64)pa)] == 1) {
+    *pte &= ~PTE_C;
+    *pte |= PTE_W;
+    release(&kmem.lock);
+    return 0;
+  }
+  release(&kmem.lock);
+  char* mem;
+  flags = PTE_FLAGS(*pte);
+  if((mem = kalloc()) == 0) {
+    printf ("out of mem\n");
+    return -1;
+  }
+  memmove(mem, (char*)pa, PGSIZE);
+  kfree ((char*)pa);
+  *pte = PA2PTE(mem) | flags | PTE_W;
+  *pte &= ~PTE_C;
+  return 0;
 }
